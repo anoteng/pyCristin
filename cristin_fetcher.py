@@ -2,10 +2,10 @@ import requests
 import csv
 
 # === KONFIG ===
-START_YEAR = 2020
+START_YEAR = 2018
 END_YEAR = 2024
 CRISTIN_ID_FIL = "cristin_ids.txt"
-OUTPUT_FILE = "cristin_publikasjoner.csv"
+OUTPUT_FILE = "cristin_publikasjoner_kategoriadaptiv.csv"
 CRISTIN_API_BASE = "https://api.cristin.no/v2"
 
 def hent_navn_fra_api(cristin_id):
@@ -15,15 +15,71 @@ def hent_navn_fra_api(cristin_id):
         print(f"⚠️  Klarte ikke hente navn for {cristin_id} ({response.status_code})")
         return "Ukjent navn"
     data = response.json()
-    fornavn = data.get("first_name", "")
-    etternavn = data.get("surname", "")
-    return f"{fornavn} {etternavn}".strip()
+    return f"{data.get('first_name', '')} {data.get('surname', '')}".strip()
+
+def bestem_publiseringssted(pub, kategori):
+    kanal = ""
+    kilde = ""
+
+    # === 1: Journal
+    journal = pub.get("journal")
+    if isinstance(journal, dict) and isinstance(journal.get("name"), str):
+        kanal = journal["name"]
+        kilde = "journal.name"
+
+    # === 2: Publisher
+    if not kanal and isinstance(pub.get("publisher"), dict):
+        kanal = pub["publisher"].get("name", "")
+        if kanal:
+            kilde = "publisher.name"
+
+    # === 3: Lecture / Academic lecture – organiser/event
+    if not kanal and kategori.lower() in ["lecture", "academic lecture"]:
+        kanal = pub.get("organiser", "")
+        if kanal:
+            kilde = "organiser"
+        elif pub.get("event", {}).get("arranged_by", {}).get("name"):
+            kanal = pub["event"]["arranged_by"]["name"]
+            kilde = "event.arranged_by.name"
+        elif pub.get("event", {}).get("name") and pub.get("event", {}).get("location"):
+            kanal = f"{pub['event']['name']} – {pub['event']['location']}"
+            kilde = "event.name + location"
+        elif pub.get("event", {}).get("name"):
+            kanal = pub["event"]["name"]
+            kilde = "event.name"
+
+    # === 4: Doctoral dissertation – series
+    if not kanal and kategori.lower() == "doctoral dissertation":
+        kanal = pub.get("series", {}).get("name", "")
+        if kanal:
+            kilde = "series.name"
+
+    # === 5: place
+    if not kanal and pub.get("place"):
+        kanal = pub["place"]
+        kilde = "place"
+
+    # === 6: media_type
+    if not kanal and pub.get("media_type", {}).get("code_name", {}).get("en"):
+        kanal = pub["media_type"]["code_name"]["en"]
+        kilde = "media_type.code_name"
+
+    # === 7: channel.title
+    if not kanal and pub.get("channel", {}).get("title"):
+        kanal = pub["channel"]["title"]
+        kilde = "channel.title"
+
+    if not kanal:
+        kanal = "Ukjent"
+        kilde = "Ingen relevante felter funnet"
+
+    return kanal, kilde
 
 def hent_publikasjoner(cristin_id, navn):
     url = f"{CRISTIN_API_BASE}/persons/{cristin_id}/results"
     response = requests.get(url)
     if response.status_code != 200:
-        print(f"Feil ved henting av resultater for {cristin_id}: {response.status_code}")
+        print(f"❌ Feil ved henting av resultater for {cristin_id}: {response.status_code}")
         return []
 
     publikasjoner = response.json()
@@ -39,46 +95,17 @@ def hent_publikasjoner(cristin_id, navn):
             tittel = pub.get("title", {}).get(pub.get("original_language", ""), "(Uten tittel)")
             kategori = pub.get("category", {}).get("name", {}).get("en", "")
             nvi = "-"
-            publiseringssted = "Ukjent"
-            media_type = ""
-            url_resultat = pub.get("url", "")
+            if pub.get("journal", {}).get("publisher", {}).get("nvi_level"):
+                nvi = pub["journal"]["publisher"]["nvi_level"]
 
-            # Journal + NVI
-            journal_felt = pub.get("journal")
-            if isinstance(journal_felt, dict):
-                name_felt = journal_felt.get("name", {})
-                if isinstance(name_felt, dict):
-                    publiseringssted = name_felt.get("nb") or name_felt.get("en") or publiseringssted
-                publisher = journal_felt.get("publisher")
-                if isinstance(publisher, dict):
-                    nvi = publisher.get("nvi_level", "-")
-            elif isinstance(journal_felt, str) and journal_felt:
-                publiseringssted = journal_felt
-
-            # Hvis fortsatt ukjent, prøv place
-            if publiseringssted == "Ukjent" and pub.get("place"):
-                publiseringssted = pub.get("place")
-
-            # Hvis fortsatt ukjent, prøv publisher utenfor journal
-            if publiseringssted == "Ukjent" and "publisher" in pub:
-                publisher_felt = pub.get("publisher")
-                if isinstance(publisher_felt, dict):
-                    name_felt = publisher_felt.get("name", {})
-                    if isinstance(name_felt, dict):
-                        publiseringssted = name_felt.get("nb") or name_felt.get("en") or publiseringssted
-                elif isinstance(publisher_felt, str):
-                    publiseringssted = publisher_felt
+            publiseringssted, kanal_kilde = bestem_publiseringssted(pub, kategori)
 
             # Media type
-            if "media_type" in pub:
-                code_name = pub["media_type"].get("code_name", {})
-                if isinstance(code_name, dict):
-                    media_type = code_name.get("en", "")
-                elif isinstance(pub["media_type"], str):
-                    media_type = pub["media_type"]
-
-            if not publiseringssted:
-                publiseringssted = "Ukjent"
+            media_type = ""
+            if isinstance(pub.get("media_type"), dict):
+                media_type = pub["media_type"].get("code_name", {}).get("en", "")
+            elif isinstance(pub.get("media_type"), str):
+                media_type = pub["media_type"]
 
             resultatliste.append({
                 "Cristin-ID": cristin_id,
@@ -89,8 +116,9 @@ def hent_publikasjoner(cristin_id, navn):
                 "Publiseringssted / Kanal": publiseringssted,
                 "Media type": media_type,
                 "NVI-nivå": nvi,
-                "Resultat-URL": url_resultat,
-                "Cristin Resultat-ID": pub.get("cristin_result_id", "")
+                "Resultat-URL": pub.get("url", ""),
+                "Cristin Resultat-ID": pub.get("cristin_result_id", ""),
+                "Kanal-kilde (debug)": kanal_kilde  # Valgfritt – fjern om du vil
             })
 
     return resultatliste
@@ -108,7 +136,7 @@ def lagre_csv(publikasjoner, filnavn):
         writer = csv.DictWriter(csvfile, fieldnames=feltnavn)
         writer.writeheader()
         writer.writerows(publikasjoner)
-    print(f"{len(publikasjoner)} resultater lagret i '{filnavn}'.")
+    print(f"✅ {len(publikasjoner)} resultater lagret i '{filnavn}'.")
 
 def main():
     cristin_ids = les_cristin_ids(CRISTIN_ID_FIL)
