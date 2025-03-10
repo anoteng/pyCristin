@@ -2,8 +2,7 @@ import requests
 import csv
 
 # === KONFIG ===
-INSTITUSJON = "nmbu"  # <- juster her hvis ikke alle er fra NTNU
-START_YEAR = 2018
+START_YEAR = 2020
 END_YEAR = 2024
 OUTPUT_FILE = "cristin_publikasjoner.csv"
 CRISTIN_ID_FIL = "cristin_ids.txt"
@@ -11,42 +10,52 @@ CRISTIN_ID_FIL = "cristin_ids.txt"
 CRISTIN_API_BASE = "https://api.cristin.no/v2"
 
 def hent_personnavn(cristin_id):
-    url = f"{CRISTIN_API_BASE}/persons/{INSTITUSJON}/{cristin_id}"
+    url = f"{CRISTIN_API_BASE}/persons/{cristin_id}"
     response = requests.get(url)
     if response.status_code != 200:
-        print(f"Feil ved henting av persondata for {cristin_id} ({response.status_code})")
+        print(f"Feil ved henting av persondata for {cristin_id}: {response.status_code}")
         return "Ukjent navn"
     data = response.json()
-    navn = data.get("full_name", "Ukjent navn")
-    return navn
+    return data.get("full_name", "Ukjent navn")
 
 def hent_publikasjoner(cristin_id, navn):
-    url = (
-        f"{CRISTIN_API_BASE}/results?"
-        f"contributor={INSTITUSJON}/{cristin_id}&"
-        f"from_year={START_YEAR}&to_year={END_YEAR}"
-    )
+    url = f"{CRISTIN_API_BASE}/persons/{cristin_id}/results"
     response = requests.get(url)
     if response.status_code != 200:
-        print(f"Feil ved henting av publikasjoner for {cristin_id} ({response.status_code})")
+        print(f"Feil ved henting av publikasjoner for {cristin_id}: {response.status_code}")
         return []
 
     publikasjoner = response.json()
     resultatliste = []
+
     for pub in publikasjoner:
-        tittel = pub.get("title", {}).get("nb") or pub.get("title", {}).get("en") or "(Uten tittel)"
-        journal = ""
-        if pub.get("journal"):
-            journal = pub["journal"].get("name", {}).get("nb") or pub["journal"].get("name", {}).get("en", "")
-        resultatliste.append({
-            "Cristin-ID": cristin_id,
-            "Navn": navn,
-            "Tittel på publikasjon": tittel,
-            "Tidsskrift / Journal": journal,
-            "År": pub.get("year_published", ""),
-            "Type": pub.get("category", ""),
-            "Cristin Resultat-ID": pub.get("cristin_result_id", "")
-        })
+        try:
+            år = int(pub.get("year_published", 0))
+        except ValueError:
+            continue
+
+        if START_YEAR <= år <= END_YEAR:
+            tittel = pub.get("title", {}).get(pub.get("original_language", ""), "(Uten tittel)")
+            kategori = pub.get("category", {}).get("name", {}).get("en", "")
+            journal = ""
+            if "journal" in pub and pub["journal"]:
+                journal = pub["journal"].get("name", {}).get("nb") or pub["journal"].get("name", {}).get("en", "")
+
+            nvi = "-"
+            if pub.get("journal", {}).get("publisher", {}).get("nvi_level"):
+                nvi = pub["journal"]["publisher"]["nvi_level"]
+
+            resultatliste.append({
+                "Cristin-ID": cristin_id,
+                "Navn": navn,
+                "Tittel": tittel,
+                "År": år,
+                "Kategori": kategori,
+                "Tidsskrift / Journal": journal,
+                "NVI-nivå": nvi,
+                "Cristin Resultat-ID": pub.get("cristin_result_id", "")
+            })
+
     return resultatliste
 
 def les_cristin_ids(filnavn):
@@ -76,4 +85,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
