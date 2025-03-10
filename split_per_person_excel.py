@@ -10,11 +10,9 @@ from openpyxl.styles import Alignment
 INPUT_CSV = "cristin_publikasjoner_kategoriadaptiv.csv"
 OUTPUT_DIR = "excel_per_person"
 
-# Nedtrekksalternativer
 kategori_valg = ["Basic or Discovery", "Applied or Integration", "Teaching and Learning", "N/A"]
 type_valg = ["Peer reviewed journal articles", "Additional peer- or editorial reviewed ICs", "All other ICs"]
 
-# Hjelpetekst
 hjelpetekst = (
     "Velg kategorisering av bidraget, prøv å klassifisere så mange som mulig, bruk kommentarfeltet hvis ikke mulig. "
     "Legg også til en kommentar om det er noe her som er spesielt relevant for HH-s mission statement eller som kan sies å ha hatt impact (målbare resultater ut over siteringer, eks. endring i policy etc.).\n\n"
@@ -24,27 +22,36 @@ hjelpetekst = (
     "• Teaching and Learning Scholarship explores the theory and methods of teaching and advances new understandings, insights, content, and methods that impact learning behavior."
 )
 
-# Lag output-mappe
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Les CSV
+# === Les CSV ===
 df = pd.read_csv(INPUT_CSV)
 
-# Legg til kolonner for manuell klassifisering
+# Legg til tomme kolonner
 df["Kategori"] = ""
 df["Type"] = ""
 df["Kommentar"] = ""
 df["Awards etc."] = ""
 
-# Gruppér per person
-for (cristin_id, navn), gruppe in df.groupby(["Cristin-ID", "Navn"]):
+# Reorganiser kolonnene og fjern uønskede
+kolonner = list(df.columns)
+kolonner = [k for k in kolonner if k not in ["Cristin-ID", "kanal-kilde"]]
+
+if "Kategori" in kolonner and "Type" in kolonner:
+    kolonner.remove("Kategori")
+    type_index = kolonner.index("Type")
+    kolonner.insert(type_index, "Kategori")
+
+df = df[kolonner]
+
+# === Gruppér per person og lag Excel-filer ===
+for navn, gruppe in df.groupby("Navn"):
     navn_deler = navn.strip().split()
     etternavn = navn_deler[-1] if len(navn_deler) >= 2 else navn
     fornavn = " ".join(navn_deler[:-1]) if len(navn_deler) >= 2 else ""
     safe_navn = f"{etternavn}, {fornavn}".strip().replace("/", "_").replace("\\", "_")
     filnavn = f"{OUTPUT_DIR}/publikasjoner - {safe_navn}.xlsx"
 
-    # Opprett ny arbeidsbok
     wb = Workbook()
     ws = wb.active
     ws.title = "Publikasjoner"
@@ -55,7 +62,7 @@ for (cristin_id, navn), gruppe in df.groupby(["Cristin-ID", "Navn"]):
     cell.value = hjelpetekst
     cell.alignment = Alignment(wrap_text=True, vertical="top")
 
-    # === 2: Skriv inn kolonneoverskrifter og data fra rad 11
+    # === 2: Skriv overskrifter og data fra rad 11
     data_start_row = 11
     for col_idx, col_name in enumerate(gruppe.columns, start=1):
         ws.cell(row=data_start_row, column=col_idx).value = str(col_name)
@@ -67,7 +74,7 @@ for (cristin_id, navn), gruppe in df.groupby(["Cristin-ID", "Navn"]):
     max_row = ws.max_row
     max_col = ws.max_column
 
-    # === 3: Opprett Excel-tabell over datadelen
+    # === 3: Excel-tabell
     col_letter_end = get_column_letter(max_col)
     tab_ref = f"A{data_start_row}:{col_letter_end}{max_row}"
     table = Table(displayName="Publikasjoner", ref=tab_ref)
@@ -76,7 +83,7 @@ for (cristin_id, navn), gruppe in df.groupby(["Cristin-ID", "Navn"]):
     table.tableStyleInfo = style
     ws.add_table(table)
 
-    # === 4: Nedtrekksmeny
+    # === 4: Nedtrekksmenyer
     headers = [ws.cell(row=data_start_row, column=c).value for c in range(1, max_col + 1)]
     for col in range(1, max_col + 1):
         header = headers[col - 1]
@@ -90,7 +97,12 @@ for (cristin_id, navn), gruppe in df.groupby(["Cristin-ID", "Navn"]):
             ws.add_data_validation(dv)
             dv.add(f"{col_letter}{data_start_row + 1}:{col_letter}{max_row}")
 
-    # === 5: Summeringstabell
+    # === 5: Skjul "Cristin Resultat-ID" hvis finnes
+    if "Cristin Resultat-ID" in headers:
+        col_idx = headers.index("Cristin Resultat-ID") + 1
+        ws.column_dimensions[get_column_letter(col_idx)].hidden = True
+
+    # === 6: Summeringstabell
     sum_start_row = max_row + 2
     ws.cell(row=sum_start_row, column=1).value = "Oppsummering (automatisk)"
 
@@ -112,7 +124,6 @@ for (cristin_id, navn), gruppe in df.groupby(["Cristin-ID", "Navn"]):
     else:
         ws.cell(row=sum_start_row + 8, column=1).value = "⚠️ Type-kolonne ikke funnet"
 
-    # === 6: Lagre
     wb.save(filnavn)
     print(f"✅ Lagret: {filnavn}")
 
