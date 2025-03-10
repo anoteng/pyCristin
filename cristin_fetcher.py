@@ -31,19 +31,26 @@ def hent_publikasjoner(cristin_id, navn):
     for pub in publikasjoner:
         try:
             år = int(pub.get("year_published", 0))
-        except ValueError:
+        except (ValueError, TypeError):
             continue
 
         if START_YEAR <= år <= END_YEAR:
             tittel = pub.get("title", {}).get(pub.get("original_language", ""), "(Uten tittel)")
             kategori = pub.get("category", {}).get("name", {}).get("en", "")
-            journal = ""
-            if "journal" in pub and pub["journal"]:
-                journal = pub["journal"].get("name", {}).get("nb") or pub["journal"].get("name", {}).get("en", "")
 
+            # --- Journal og NVI-nivå ---
+            journal = ""
             nvi = "-"
-            if pub.get("journal", {}).get("publisher", {}).get("nvi_level"):
-                nvi = pub["journal"]["publisher"]["nvi_level"]
+
+            journal_felt = pub.get("journal")
+            if isinstance(journal_felt, dict):
+                name_felt = journal_felt.get("name", {})
+                if isinstance(name_felt, dict):
+                    journal = name_felt.get("nb") or name_felt.get("en") or ""
+                if isinstance(journal_felt.get("publisher"), dict):
+                    nvi = journal_felt["publisher"].get("nvi_level", "-")
+            elif isinstance(journal_felt, str):
+                journal = journal_felt
 
             resultatliste.append({
                 "Cristin-ID": cristin_id,
@@ -85,3 +92,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
