@@ -94,9 +94,17 @@ def hent_publikasjoner(cristin_id, navn):
         if START_YEAR <= år <= END_YEAR:
             tittel = pub.get("title", {}).get(pub.get("original_language", ""), "(Uten tittel)")
             kategori = pub.get("category", {}).get("name", {}).get("en", "")
+            # Hent nvi_level fra detaljvisning
             nvi = "-"
-            if pub.get("journal", {}).get("publisher", {}).get("nvi_level"):
-                nvi = pub["journal"]["publisher"]["nvi_level"]
+            resultat_id = pub.get("cristin_result_id")
+            if resultat_id:
+                resurl = f"{CRISTIN_API_BASE}/results/{resultat_id}"
+                resresp = requests.get(resurl)
+                if resresp.status_code == 200:
+                    resdata = resresp.json()
+                    journal = resdata.get("journal", {})
+                    if isinstance(journal, dict):
+                        nvi = journal.get("nvi_level") or journal.get("publisher", {}).get("nvi_level") or "-"
 
             publiseringssted, kanal_kilde = bestem_publiseringssted(pub, kategori)
 
