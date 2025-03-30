@@ -80,7 +80,23 @@ def hent_inst_landkode_og_navn(inst):
             return landkode, navn
     return None, None
 
-def analyser_samarbeid(publikasjoner):
+def hent_eget_universitetsnavn(unit_id):
+    url = f"{CRISTIN_API_BASE}/units/{unit_id}"
+    resp = hent_med_retry(url)
+    if resp.status_code != 200:
+        return None
+    data = resp.json()
+    inst = data.get("institution", {})
+    if inst:
+        inst_url = inst.get("url")
+        inst_resp = hent_med_retry(inst_url)
+        if inst_resp.status_code == 200:
+            inst_data = inst_resp.json()
+            navn = inst_data.get("institution_name", {}).get("en") or inst_data.get("institution_name", {}).get("nb")
+            return navn
+    return None
+
+def analyser_samarbeid(publikasjoner, eget_universitet):
     uten = 0
     nasjonale = 0
     internasjonale = 0
@@ -109,14 +125,14 @@ def analyser_samarbeid(publikasjoner):
 
                 if ccu:
                     landkoder.add(ccu)
-                    if nu:
+                    if nu and nu != eget_universitet:
                         inst_navn.add(nu)
                 elif cci:
                     landkoder.add(cci)
-                    if ni:
+                    if ni and ni != eget_universitet:
                         inst_navn.add(ni)
 
-        if not landkoder:
+        if not inst_navn:
             uten += 1
         elif landkoder == {"NO"}:
             nasjonale += 1
@@ -147,7 +163,9 @@ def main():
 
     pub = hent_publikasjoner(args.unit, args.start, args.end)
     print(f"🔍 Antall peer reviewed publikasjoner funnet: {len(pub)}")
-    stats = analyser_samarbeid(pub)
+
+    eget_universitet = hent_eget_universitetsnavn(args.unit)
+    stats = analyser_samarbeid(pub, eget_universitet)
 
     print("\n📊 Oppsummering av samarbeid:")
     print(f"Uten samarbeidspartnere: {stats['uten']}")
